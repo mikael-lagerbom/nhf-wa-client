@@ -75,6 +75,18 @@ export async function getZipInfo(filePath: string): Promise<any> {
     }
 }
 
+export async function readTextFile(filePath: string): Promise<string> {
+    return await invoke('read_file', { filePath }) as string;
+}
+
+export async function fileExists(filePath: string): Promise<boolean> {
+    try {
+        return await invoke('file_exists', { filePath }) as boolean;
+    } catch {
+        return false;
+    }
+}
+
 export async function writeTextFile(filePath: string, contents: string): Promise<void> {
     await invoke('write_file', { filePath, contents });
 }

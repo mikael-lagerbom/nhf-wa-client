@@ -81,6 +81,7 @@
   let companionLastFetch = $state("");
   let companionSavedData = $state("");
   let isCompanionFetching = $state(false);
+  let companionFetchOnStartup = $state(false);
 
   type InstallDockPhase = "download" | "extract" | "backup";
 
@@ -365,6 +366,9 @@
       const storedExternalApiKey = await store.get("external_api_key");
       const storedCompanionLastFetch = await store.get("companion_last_fetch");
       const storedCompanionSeasonId = await store.get("companion_season_id");
+      const storedCompanionFetchOnStartup = await store.get(
+        "companion_fetch_on_startup",
+      );
 
       if (storedExternalApiKey && typeof storedExternalApiKey === "string") {
         externalApiKey = storedExternalApiKey;
@@ -380,6 +384,9 @@
         typeof storedCompanionSeasonId === "string"
       ) {
         companionSeasonId = storedCompanionSeasonId;
+      }
+      if (storedCompanionFetchOnStartup !== undefined) {
+        companionFetchOnStartup = storedCompanionFetchOnStartup;
       }
     }
   };
@@ -429,6 +436,18 @@
       await autoUpdateCheck();
     }
   }, 2000); // Reduced delay to 2 seconds for faster startup
+
+  const runStartupCompanionFetch = async () => {
+    if (!companionFetchOnStartup) return;
+    if (!wowFolder || !isRetailWowPath(wowFolder)) return;
+    if (!externalApiKey.trim()) return;
+    if (isCompanionFetching) return;
+
+    await loadCompanionSeasons();
+    await fetchCompanionData();
+  };
+
+  setTimeout(runStartupCompanionFetch, 2000);
 
   // Set up auto-update interval (much shorter for faster updates)
   let autoUpdateInterval: number | null = null;
@@ -785,6 +804,11 @@
     await store.set("companion_season_id", companionSeasonId);
   };
 
+  const updateCompanionFetchOnStartup = async () => {
+    if (!store) return;
+    await store.set("companion_fetch_on_startup", companionFetchOnStartup);
+  };
+
   async function loadCompanionSeasons() {
     const trimmedKey = externalApiKey.trim();
     if (!trimmedKey) {
@@ -859,7 +883,7 @@
       }
 
       showNotification(
-        `Companion data written (${result.bossCount} bosses, ${result.imageCount} images, season ${result.seasonId}). /reload in WoW to load.`,
+        `Companion data written (${result.bossCount} bosses, ${result.raidPlanCount} raid plans, ${result.imageCount} images, season ${result.seasonId}). /reload in WoW to load.`,
         "success",
       );
     } catch (e) {
@@ -1813,10 +1837,14 @@
       <section class="companion-panel">
         <h2 class="panel-section-title">Companion</h2>
         <p class="companion-help">
-          Officer-only: fetch raid roster and assignment notes into the
+          Fetch raid roster, assignment notes and raid plans into the
           <code>NHFCompanion</code> addon. Generate an API key in the web app
           under
-          <strong>Settings → External API</strong>.
+          <strong>Your Profile</strong>.
+        </p>
+        <p class="companion-disclaimer">
+          After fetching, run <code>/reload</code> in WoW for the addon to load updated
+          data.
         </p>
 
         {#if !wowFolder || !isRetailWowPath(wowFolder)}
@@ -1871,6 +1899,18 @@
         </div>
 
         <div class="companion-actions">
+          <div class="checkbox-group companion-fetch-on-startup">
+            <input
+              type="checkbox"
+              id="companion_fetch_on_startup"
+              bind:checked={companionFetchOnStartup}
+              onchange={updateCompanionFetchOnStartup}
+            />
+            <label for="companion_fetch_on_startup"
+              >Fetch data on app launch</label
+            >
+          </div>
+
           <button
             type="button"
             class="companion-fetch-btn"
@@ -1901,7 +1941,9 @@
             class:companion-data-textarea-empty={!companionSavedData}
             value={companionSavedData}
             placeholder="Fetch data to preview the saved Data.lua content…"
-            title={companionSavedData ? "Click to copy to clipboard" : undefined}
+            title={companionSavedData
+              ? "Click to copy to clipboard"
+              : undefined}
             onclick={copyCompanionSavedData}
           ></textarea>
           {#if companionSavedData}
@@ -2323,20 +2365,34 @@
     color: var(--text-muted);
   }
 
+  .companion-disclaimer {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-ring);
+    border-radius: var(--radius-sm);
+  }
+
   .companion-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     flex: 0 0 auto;
-    margin: 2px 0 14px;
+    margin: 0 0 14px;
   }
 
   .companion-data-preview {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    margin: 0 0 16px;
+    margin: 0 0 8px;
     min-height: 0;
     min-width: 0;
     max-width: 100%;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
   }
 
   .companion-data-preview label {
@@ -2350,9 +2406,10 @@
     width: 100%;
     max-width: 100%;
     min-width: 0;
-    min-height: 100px;
-    max-height: 160px;
-    padding: 10px 14px;
+    height: 44px;
+    min-height: 44px;
+    max-height: 44px;
+    padding: 8px 12px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 11px;
     line-height: 1.45;
@@ -2361,8 +2418,8 @@
     background: var(--surface-0);
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
-    resize: vertical;
-    overflow-x: auto;
+    resize: none;
+    overflow: hidden;
     overflow-wrap: anywhere;
     white-space: pre-wrap;
     cursor: pointer;
@@ -2393,6 +2450,7 @@
 
   .companion-meta {
     flex: 0 0 auto;
+    flex-shrink: 0;
     padding-top: 0;
   }
 
@@ -2414,9 +2472,11 @@
   }
 
   .companion-help code,
+  .companion-disclaimer code,
   .companion-output-path code {
     font-size: 12px;
     color: var(--text);
+    font-weight: 600;
   }
 
   .companion-fetch-btn {

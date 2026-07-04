@@ -1,8 +1,8 @@
-export const NHF_COMPANION_TOC = `## Interface: 120007
+export const NHF_COMPANION_TOC = `## Interface: 120007, 120100
 ## Title: NHF Companion
 ## Notes: Raid roster and assignment data from NHF
 ## Author: Exality
-## Version: 1.0.0
+## Version: 1.1.0
 
 Data.lua
 `;

@@ -195,6 +195,11 @@ fn write_binary_file(file_path: String, contents: Vec<u8>) -> Result<(), String>
 }
 
 #[tauri::command]
+fn file_exists(file_path: String) -> bool {
+    PathBuf::from(&file_path).is_file()
+}
+
+#[tauri::command]
 fn clear_directory(file_path: String) -> Result<(), String> {
     let path = PathBuf::from(&file_path);
     if path.exists() {
@@ -773,6 +778,7 @@ pub fn run() {
             read_file,
             write_file,
             write_binary_file,
+            file_exists,
             clear_directory,
             validate_zip,
             get_zip_info,

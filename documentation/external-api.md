@@ -1,272 +1,146 @@
-# External API
+# External API Reference (`/api/external/v1`)
 
-Read-only HTTP API for pulling boss roster data and generated assignment notes into external tools (bots, spreadsheets, WeakAuras helpers, etc.).
+REST API for external integrations — primarily the WoW addon / companion app. All
+responses are JSON. Source of truth: `backend/src/routes/external.ts` and
+`backend/src/services/externalApiData.ts`.
 
-All endpoints live under `/api/external/v1` and use **Bearer token** authentication. They do not use Discord session cookies.
-
----
+Base URL: `https://<host>/api/external/v1`
 
 ## Authentication
 
-### Creating an API key
+Every endpoint requires a team-scoped API key passed as a Bearer token:
 
-1. Log in as an **officer** for the team.
-2. Open **Settings → External API**.
-3. Enter a name (e.g. `Raid bot`) and click **Generate API key**.
-4. **Copy the key immediately** — it is only shown once.
-
-Keys look like: `nhf_<random>` (prefix `nhf_`).
-
-### Using an API key
-
-Send the key on every request:
-
-```http
-Authorization: Bearer nhf_your_key_here
+```
+Authorization: Bearer nhf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-The key is tied to the team it was created for. You do not pass `teamId` in the URL; the server resolves the team from the token.
+- Keys are created by officers in **Team Settings → API Keys**. The plain token
+  is shown **once** on creation; only a SHA-256 hash is stored.
+- The key determines the team — there is no team parameter on any endpoint.
+- Missing/invalid key → `401 { "error": "..." }`.
 
-Keys are stored as SHA-256 hashes. Revoking a key in Settings invalidates it immediately.
-
-### Errors
-
-| Status | Meaning                                                          |
-| ------ | ---------------------------------------------------------------- |
-| `401`  | Missing header, malformed `Bearer` value, or invalid/revoked key |
-| `500`  | Server error                                                     |
-
-Error body: `{ "error": "..." }`
-
----
-
-## Base URL
-
-Use your deployment’s backend origin, for example:
-
-- Local dev: `http://localhost:5000`
-- Production: your public API host (same origin that serves `/api/*`)
-
----
-
-## Query parameters
-
-| Parameter  | Required | Description                                                                                        |
-| ---------- | -------- | -------------------------------------------------------------------------------------------------- |
-| `seasonId` | No       | Raid season id (e.g. `midnight-s1`). If omitted, uses the team’s **current season** from Settings. |
-
----
-
-## Endpoints
-
-### GET `/api/external/v1/seasons`
-
-Returns the team’s **current season** (from Settings → Raid season) and the full list of **available seasons** from `seasons.json`.
-
-No query parameters.
-
-#### Example request
-
-```bash
-curl -s \
-  -H "Authorization: Bearer nhf_your_key_here" \
-  "https://your-host/api/external/v1/seasons"
+```sh
+curl -H "Authorization: Bearer nhf_..." https://<host>/api/external/v1/seasons
 ```
 
-#### Example response
+## Common concepts
 
-```json
+- **`seasonId` query param** — all data endpoints accept `?seasonId=` (e.g.
+  `midnight-s2`). When omitted: the team's current season, falling back to the
+  manifest default. Valid ids come from `GET /seasons`.
+- **`bossId`** — roster boss uuid; the canonical join key across all endpoints.
+  Boss names, images, and Blizzard ids live in `GET /season` → `bosses[]`; other
+  endpoints reference bosses by `bossId` only.
+- **`journalEncounterId`** — Blizzard journal encounter id (`EJ_*` APIs), exposed
+  on season bosses for addon texture lookups.
+- **`encounterId`** — Blizzard *dungeon* encounter id (`ENCOUNTER_START` /
+  DBM/BigWigs), used on assignments so the addon can match live encounters.
+- **Errors** — non-2xx responses use the envelope `{ "error": "message" }`
+  (401 unauthorized, 500 internal).
+
+---
+
+## GET /seasons
+
+The team's current season plus all seasons known to the app (id list only — use
+`GET /season` for boss catalog).
+
+```jsonc
 {
-  "teamId": "uuid",
-  "currentSeasonId": "midnight-s1",
+  "teamId": "team-uuid",
+  "currentSeasonId": "midnight-s2",
   "currentSeason": {
-    "id": "midnight-s1",
-    "name": "Season 1",
-    "shortLabel": "S1",
+    "id": "midnight-s2",
+    "name": "Midnight Season 2",
+    "shortLabel": "S2",
     "expansion": "Midnight",
-    "expansionLogo": "/images/wow-midnight-12.png",
-    "journalPath": "/journal/midnight-s1.json"
+    "journalPath": "/journal/midnight-s2.json"
   },
-  "defaultSeasonId": "midnight-s1",
-  "seasons": [
+  "defaultSeasonId": "midnight-s2",
+  "seasons": [ /* same shape as currentSeason */ ]
+}
+```
+
+---
+
+## GET /season?seasonId=
+
+Season metadata plus the **canonical boss catalog** for the season. Fetch this
+first (or cache it) and join other endpoints on `bossId`.
+
+```jsonc
+{
+  "teamId": "team-uuid",
+  "seasonId": "midnight-s2",
+  "season": {
+    "id": "midnight-s2",
+    "name": "Midnight Season 2",
+    "shortLabel": "S2",
+    "expansion": "Midnight",
+    "journalPath": "/journal/midnight-s2.json"
+  },
+  "roster": {                       // null when no roster exists for the season
+    "id": "roster-uuid",
+    "name": "Mythic Roster",
+    "displayName": "Mythic Roster",
+    "raidDate": "2026-07-02",       // null when unset
+    "updatedAt": "2026-07-01T18:22:03.000Z"
+  },
+  "bosses": [
     {
-      "id": "midnight-s1",
-      "name": "Season 1",
-      "shortLabel": "S1",
-      "expansion": "Midnight",
-      "expansionLogo": "/images/wow-midnight-12.png",
-      "journalPath": "/journal/midnight-s1.json"
-    },
-    {
-      "id": "midnight-s2",
-      "name": "Season 2",
-      "shortLabel": "S2",
-      "expansion": "Midnight",
-      "expansionLogo": "/images/wow-midnight-12.png",
-      "journalPath": "/journal/midnight-s2.json"
+      "bossId": "boss-uuid",         // join key for rosters, assignments, raid plans
+      "name": "Nak'zali",
+      "journalEncounterId": 2888,    // null when not linked to the journal
+      "dungeonEncounterId": 3470,    // null when unknown; use for ENCOUNTER_START matching
+      "imageUrl": "https://<host>/images/nakzali.png"  // "" when unknown
     }
   ]
 }
 ```
 
-#### Notes
-
-- **`currentSeasonId`** is the season the team has selected in Settings. If unset or invalid, falls back to `defaultSeasonId`.
-- **`currentSeason`** is the matching entry from `seasons`, for convenience.
-- Use `currentSeasonId` as the `seasonId` query param on `/rosters` and `/assignment-notes` when you want the team’s active season.
+When multiple roster bosses share the same `journalEncounterId`, raid plan boards
+for that journal boss resolve to the **first** roster boss in roster order.
 
 ---
 
-### GET `/api/external/v1/rosters`
+## GET /rosters?seasonId=
 
-Returns the boss roster for the team/season, with **one object per boss**. Each boss includes raid slots/bench and **group setup** from the primary (lowest-order, non-hidden) assignment page for that boss, when configured.
+Boss-by-boss roster: who plays and who sits, plus group setup and reminders from
+the boss's primary assignment (lowest-order, non-hidden) when present. Boss
+metadata is in `GET /season` — entries here reference `bossId` only.
 
-#### Example request
-
-```bash
-curl -s \
-  -H "Authorization: Bearer nhf_your_key_here" \
-  "https://your-host/api/external/v1/rosters?seasonId=midnight-s1"
-```
-
-#### Example response
-
-```json
+```jsonc
 {
-  "teamId": "uuid",
-  "seasonId": "midnight-s1",
-  "roster": {
-    "id": "uuid",
-    "name": "Raid Date 1/12/25",
-    "displayName": "Raid Date 1/12/25",
-    "raidDate": "2025-01-12",
-    "updatedAt": "2025-06-17T12:00:00.000Z"
+  "teamId": "team-uuid",
+  "seasonId": "midnight-s2",
+  "roster": {                       // null when no roster exists for the season
+    "id": "roster-uuid",
+    "name": "Mythic Roster",
+    "displayName": "Mythic Roster",
+    "raidDate": "2026-07-02",       // null when unset
+    "updatedAt": "2026-07-01T18:22:03.000Z"
   },
   "bosses": [
     {
       "bossId": "boss-uuid",
-      "bossName": "Fyrakk",
-      "journalEncounterId": 12345,
-      "imageUrl": "https://your-host/images/chimaerus.png",
-      "slots": [
-        {
-          "playerId": "...",
-          "characterId": "...",
-          "playerName": "CharName",
-          "className": "Mage",
-          "spec": "Fire"
-        }
+      "slots": [                     // playing roster
+        { "playerName": "Healbot", "className": "Priest", "spec": "Holy" }
       ],
-      "bench": [],
-      "piAssignments": [],
-      "groupSetup": {
-        "groupCount": 4,
-        "groups": [
-          [
-            {
-              "playerName": "CharName",
-              "className": "Mage",
-              "spec": "Fire"
-            },
-            {}
-          ]
-        ],
-        "raidLeader": {
-          "playerName": "RaidLeadChar",
-          "className": "Warrior",
-          "spec": "Protection"
-        },
-        "raidAssistants": [
-          {
-            "playerName": "AssistChar",
-            "linkedTo": {
-              "componentId": "comp-uuid",
-              "componentTitle": "Groups",
-              "row": 0,
-              "col": 2
-            }
-          }
-        ]
+      "bench": [ /* same slot shape */ ],
+      "groupSetup": {                // null when the primary assignment has none
+        "groupCount": 4,             // 4 on mythic, 6 otherwise
+        "groups": [ [ /* 5 slots per group; empty slots are {} */ ] ],
+        "raidLeader": { "playerName": "..." },
+        "raidAssistants": [ { "playerName": "..." } ]
       },
-      "reminders": [
+      "reminders": [                 // null when none
         {
           "forEveryone": false,
-          "players": [
-            {
-              "playerName": "CharName",
-              "className": "Mage",
-              "spec": "Fire"
-            }
-          ],
-          "mainText": "Soak left",
-          "subText": "Group 1",
-          "iconFileId": 4638520
-        },
-        {
-          "forEveryone": true,
-          "players": [],
-          "mainText": "Stack for mechanic",
-          "iconFileId": 136243
-        },
-        {
-          "forEveryone": false,
-          "roles": ["tank", "healer"],
-          "players": [],
-          "mainText": "Use defensives",
-          "subText": "Phase 2"
-        }
-      ],
-      "assignmentId": "assignment-uuid"
-    }
-  ]
-}
-```
-
-#### Notes
-
-- If no roster exists for the season, `roster` is `null` and `bosses` is `[]`.
-- **`imageUrl`** is a full absolute URL to the boss portrait (`/images/…` on the app host), resolved from the linked journal boss (via `dungeonEncounterId` / encounter map). Empty string when no image is available. Custom roster `imageUrl` values are returned as absolute URLs when set.
-- **`groupSetup`** is included when the linked assignment has group setup data (including partial setups). Empty slots are `{}`. Linked slots include `linkedTo` instead of (or in addition to) resolved player fields.
-- **`reminders`** is included when the primary linked assignment has reminder data. Each reminder has **`mainText`**, optional **`subText`**, and optional **`iconFileId`** (WoW icon file data ID from the journal). Audience targeting:
-  - **`forEveryone: true`** — reminder applies to everyone; **`players`** is `[]`.
-  - **`roles`** — optional array of `"tank"`, `"healer"`, and/or `"dps"` when targeting by role; **`players`** is `[]`.
-  - Otherwise — **`forEveryone: false`** with resolved **`players`** (character names only — no component or link IDs), each with optional **`className`** and **`spec`**.
-- **`playerName`** on slots, bench, group setup, and PI assignments is always the **character name** (or `customText` when manually entered). Account/player names are not exposed in this field.
-- **`groupCount`** is `4` for Mythic assignments, `6` otherwise (matches in-app group setup).
-- Secret boss filtering from the raider UI does **not** apply — API keys are officer-managed and receive full roster data.
-
----
-
-### GET `/api/external/v1/assignment-notes`
-
-Returns **generated addon notes** (same format as **Get note** in the app), grouped **by boss**. Each boss can have multiple assignment pages.
-
-#### Example request
-
-```bash
-curl -s \
-  -H "Authorization: Bearer nhf_your_key_here" \
-  "https://your-host/api/external/v1/assignment-notes?seasonId=midnight-s1"
-```
-
-#### Example response
-
-```json
-{
-  "teamId": "uuid",
-  "seasonId": "midnight-s1",
-  "bosses": [
-    {
-      "bossId": "boss-uuid",
-      "bossName": "Fyrakk",
-      "journalEncounterId": 12345,
-      "assignments": [
-        {
-          "assignmentId": "assignment-uuid",
-          "assignmentName": "Fyrakk Assignments",
-          "encounterId": 67890,
-          "difficulty": "Mythic",
-          "note": "EncounterID:67890;Name:Fyrakk Assignments;Difficulty:Mythic;\ntime:10;ph:1;tag:PlayerName;text:Soak;spellid:123456;"
+          "roles": ["healer"],       // only for role-targeted reminders
+          "players": [ { "playerName": "...", "className": "..." } ],
+          "mainText": "Pre-pot on pull",
+          "subText": "…",            // omitted when empty
+          "iconFileId": 135936       // omitted when unset
         }
       ]
     }
@@ -274,42 +148,216 @@ curl -s \
 }
 ```
 
-#### Notes
-
-- Only **non-hidden** assignment pages are included.
-- **`encounterId`** is resolved from the roster boss’s journal link when possible, otherwise falls back to the stored assignment encounter id.
-- **`note`** is the full NSRT/WA string. Empty assignments produce an empty `note` string but are still listed.
-- Bosses are sorted alphabetically by `bossName`.
-- CD assignment linked notes are **not** merged here (assignment page notes only). Use the in-app note modal if you need the combined output.
-
-For NSRT line syntax, see [NSRT Note Explanation](../docs/NSRT_Note_Explanation.md).
+Slot fields (`slots`, `bench`, group setup slots, reminder players) are all
+optional: `playerName` (always the **character** name, or custom text),
+`className` (English class name, e.g. `"Mage"`), `spec`.
 
 ---
 
-## Managing keys (officers, in-app)
+## GET /assignment-notes?seasonId=
 
-| Action     | Method   | Path                                                    |
-| ---------- | -------- | ------------------------------------------------------- |
-| List keys  | `GET`    | `/api/team-settings/api-keys` (session auth)            |
-| Create key | `POST`   | `/api/team-settings/api-keys` body: `{ "name": "..." }` |
-| Revoke key | `DELETE` | `/api/team-settings/api-keys/:id`                       |
+Generated addon note strings (NSRT/WA format) per assignment, grouped by `bossId`,
+plus references to any raid plans attached to the assignment's components. Boss
+names and images are in `GET /season`.
 
-List responses include `id`, `name`, `prefix` (first part of the token for identification), `createdAt`, and `lastUsedAt`. The full token is returned only on create.
+```jsonc
+{
+  "teamId": "team-uuid",
+  "seasonId": "midnight-s2",
+  "bosses": [
+    {
+      "bossId": "boss-uuid",
+      "assignments": [
+        {
+          "assignmentName": "Nak'zali Mythic",
+          "encounterId": 3470,       // dungeon encounter id; null when unresolvable
+          "difficulty": "mythic",    // null when unset
+          "note": "nsrt-formatted note text…",
+          "raidPlans": [             // omitted entirely when no raid plan is attached
+            {
+              "componentId": "comp-uuid",
+              "componentType": "spell-assignment",  // "group" | "spell-assignment" | "note"
+              "componentTitle": "Healing CDs",      // omitted when untitled
+              "boardId": "board-uuid",              // joins to GET /raid-plans boards[].id
+              "slideIds": ["slide-uuid-1"],         // null = all slides; [] = none
+              "slots": [
+                { "slotId": 1, "playerName": "Healbot", "className": "Priest", "spec": "Holy" },
+                { "slotId": 2, "playerName": "Dpsguy", "className": "Mage" }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### `raidPlans` semantics
+
+- Present only when a component of the assignment has an **internal** raid plan
+  board attached. Attachments to external raidstrats.gg plans are not exposed
+  (the addon cannot render them).
+- `slots` is the component's slot occupancy: slots flattened row-major
+  (group components: grid rows; spell-assignment components: each set's slots
+  as one row), 1-based flat index = `slotId`. Empty slots are skipped — `slotId`
+  values may have gaps. `slotId` matches the `slotId` field on `icon` elements
+  of the referenced raid plan board (see below).
+- `playerName` is the character name (or custom slot text).
 
 ---
 
-## Typical integration flow
+## GET /raid-plans?seasonId=
 
-1. **Seasons** — Call `/seasons` to get `currentSeasonId` and valid `seasonId` values.
-2. **Rosters** — Poll `/rosters` to get per-boss slot lists and raid groups for dashboards or TS/discord bots.
-3. **Notes** — Poll `/assignment-notes` before raid night; pick the `note` for each boss (or each `assignments[]` entry if multiple pages exist) and push to your addon/import pipeline.
-4. Use `seasonId` when testing a non-default season; omit it on roster/notes calls to follow the team’s current season (or pass `currentSeasonId` from `/seasons`).
+All raid plan boards for the season in a minimal, addon-friendly shape. Bulky
+element types (freehand drawings, emoji, uploaded images) and elements hidden in
+the editor are **excluded**; everything else carries enough data to redraw the
+plan in-game.
+
+```jsonc
+{
+  "teamId": "team-uuid",
+  "seasonId": "midnight-s2",
+  "stage": { "width": 1600, "height": 900 },   // logical coordinate space of all plans
+  "assets": {
+    "markers": [{ "index": 1, "iconUrl": "https://<host>/images/boss-insights/marker-1.png" }],
+    "roles": [{ "role": "tank", "iconUrl": "https://<host>/images/tank.png" }],
+    "classes": [{ "className": "Death Knight", "iconUrl": "https://wow.zamimg.com/..." }],
+    "abilities": [{ "iconId": 123456, "iconUrl": "https://render.worldofwarcraft.com/..." }],
+    "media": [{ "path": "/media/<teamId>/upload.png", "url": "https://<host>/media/<teamId>/upload.png" }]
+  },
+  "boards": [
+    {
+      "id": "board-uuid",
+      "name": "Nak'zali Mythic",
+      "bossId": "boss-uuid",         // joins to GET /season bosses[].bossId; null when unlinked
+      "order": 0,                    // display order
+      "updatedAt": "2026-07-01T18:22:03.000Z",
+      "slides": [
+        {
+          "id": "slide-uuid",
+          "name": "P1 positions",
+          "backgroundUrl": "https://<host>/images/raid-plans/arenas/midnight-s2/nakzali-arena.jpg",
+          "elements": [ /* see element reference below */ ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Assets (`assets`)
+
+Downloadable image catalog for addon prefetch. **Markers, roles, and classes** list
+every palette icon (all 8 markers, 3 roles, 13 classes) even when unused on any
+board. **Abilities** and **media** include only images referenced on at least one
+plan in this response (`abilities` from boss-ability icon elements; `media` from
+uploaded team images on plans — media elements are still omitted from
+`slides[].elements`, but their URLs appear here for out-of-game download).
+
+| Key | Contents |
+|---|---|
+| `markers` | `{ index, iconUrl }` — raid target markers 1–8 |
+| `roles` | `{ role, iconUrl }` — `tank` / `healer` / `dps` |
+| `classes` | `{ className, iconUrl }` — all WoW classes |
+| `abilities` | `{ iconId, iconUrl }` — boss ability icons used on plans |
+| `media` | `{ path, url }` — `path` is the stored `/media/…` ref; `url` is absolute |
+
+Per-element `icon.iconUrl` on slides duplicates the matching `assets` entry for
+convenience; prefer `assets` for bulk prefetch.
+
+### Coordinate space
+
+- Fixed logical canvas of **1600 × 900** (`stage`), origin top-left, x right,
+  y down. Scale uniformly to your render size.
+- `x`/`y` is the element **center** for icons and shapes, and the **top-left
+  corner** for text elements. Arrow/triangle `points` are **relative to** `x`/`y`.
+- `rotation` in degrees (clockwise), `opacity` 0–1.
+- Element array order is **z-order**: index 0 renders at the bottom.
+- Colors are objects with **0–1 channel values**: `{ "r": 1, "g": 0.2, "b": 0.2 }`,
+  with `"a"` included only when < 1 (omitted = fully opaque; `a: 0` = fully
+  transparent, e.g. a shape with no fill). Values are ready for WoW's
+  `SetVertexColor`/`SetColorTexture`-style APIs.
+
+### Backgrounds
+
+- `backgroundUrl` is an absolute URL to a 16:9 image (~1600×900 JPG/PNG) served
+  by the web app; download and cache it. `null` = plain dark background.
+- WoW addons cannot fetch URLs in-game — download images out-of-game (companion
+  app / manual step) and ship them as addon media.
+
+### Element reference
+
+Common fields on every element:
+
+| Field | Type | Notes |
+|---|---|---|
+| `type` | string | `icon`, `rect`, `circle`, `triangle`, `arrow`, `text` |
+| `id` | string | stable element id |
+| `x`, `y` | number | center position, logical px |
+| `rotation` | number | degrees |
+| `opacity` | number | 0–1 |
+| `label` | object? | optional text label, see below |
+
+`label`: `{ text, fontSize, color, position?, offsetY?, strokeColor?, strokeWidth? }`
+— `color`/`strokeColor` are color objects (see above), `position` is `below`
+(default) / `above` / `center` / `left` / `right`, `offsetY` is extra gap in px
+from the anchor edge (default 4).
+
+**`icon`** — markers, role/class icons, boss ability icons.
+
+| Field | Type | Notes |
+|---|---|---|
+| `size` | number | square side, logical px |
+| `icon` | object | see icon refs below |
+| `slotId` | number? | 1-based assignment slot; joins to `raidPlans[].slots` in assignment-notes |
+| `mask` | string? | `circle` clip for ability icons (default rectangular) |
+
+Icon refs (`icon` field):
+
+| `kind` | Fields | Meaning |
+|---|---|---|
+| `marker` | `index` 1–8, `iconUrl` | raid target marker (1 star, 2 circle, 3 diamond, 4 triangle, 5 moon, 6 square, 7 cross, 8 skull) |
+| `role` | `role`, `iconUrl` | `tank` / `healer` / `dps` |
+| `class` | `className`, `iconUrl?` | English class name, e.g. `"Death Knight"` |
+| `ability` | `iconId`, `iconUrl` | boss ability icon; `iconId` is the WoW icon **FileDataID** (usable directly with texture APIs) |
+
+`iconUrl` is an absolute URL to a PNG/JPG you can download and cache. Markers and roles
+are served from the web app (`/images/boss-insights/marker-*.png`, `/images/<role>.png`);
+class icons use the Wowhead CDN; ability icons use the WoW render CDN. For in-game
+rendering you can still use built-in WoW textures from `kind`/`index`/`role`/`className`/
+`iconId` when you prefer not to ship image files.
+
+**`rect`** — `width`, `height`, `fill`, `stroke`, `strokeWidth`, `cornerRadius?`
+
+**`circle`** — ellipse: `radiusX`, `radiusY`, `fill`, `stroke`, `strokeWidth`
+
+**`triangle`** — `points` `[x0,y0,x1,y1,x2,y2]` relative to (x, y), `fill`, `stroke`, `strokeWidth`
+
+**`arrow`** — `points` `[x1,y1,x2,y2]` relative to (x, y); tail at point 1, head at point 2; `stroke`, `strokeWidth`, `fill` (arrowhead), `pointerLength?`, `pointerWidth?` (arrowhead size, default 16 each)
+
+**`text`** — `text`, `fontSize`, `color`, `backgroundColor?`, `strokeColor?` (outline), `strokeWidth?`, `fontStyle?` (`normal`/`bold`/`italic`/`bold italic`), `width?` (wrap width; absent = auto), `align?` (`left`/`center`/`right`)
+
+All `fill`, `stroke`, `color`, `backgroundColor`, and `strokeColor` fields are
+color objects: `{ "r": 0–1, "g": 0–1, "b": 0–1, "a"?: 0–1 }`.
+
+Optional fields are omitted from the JSON when unset.
+
+For exact rendering semantics (anchoring, stroke placement, label positioning,
+slot-icon player substitution, WoW texture suggestions), see
+`ADDON_RAID_PLAN_RENDERING.md`.
 
 ---
 
-## Security checklist
+## Recreating an assignment's raid plan in-game
 
-- Treat API keys like passwords; do not commit them to git or expose them in client-side code.
-- Revoke unused keys in Settings.
-- Keys grant read access to roster and assignment note data for the whole team.
-- Prefer server-to-server calls over exposing keys in browser JavaScript.
+1. `GET /season` → build a `bossId` → boss lookup (names, images).
+2. `GET /assignment-notes` → find the assignment → each entry in `raidPlans`.
+3. `GET /raid-plans` → find the board with `id === raidPlans[].boardId`.
+4. Filter the board's slides: `slideIds === null` → show all; otherwise show
+   only slides whose `id` is in `slideIds` (empty array → none).
+5. Render each slide: download/cached `backgroundUrl` (or plain dark), then draw
+   `elements` in array order, scaling 1600×900 to your frame.
+6. For `icon` elements with a `slotId`, look up the player in that
+   `raidPlans[].slots` entry with the matching `slotId` to show who the icon
+   represents (name/class coloring, highlighting "you", etc.).
