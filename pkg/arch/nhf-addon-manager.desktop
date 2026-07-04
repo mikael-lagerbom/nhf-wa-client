@@ -1,9 +1,0 @@
-[Desktop Entry]
-Categories=Game;Utility;
-Comment=Addon Manager
-Exec=nhf-aura-manager
-Icon=com.nhf-aura-manager.app
-Name=NHF Addon Manager
-Terminal=false
-Type=Application
-Version=1.0

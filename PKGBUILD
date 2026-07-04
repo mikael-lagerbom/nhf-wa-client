@@ -1,19 +1,17 @@
-# Maintainer: NHF Guild <https://nhfguild.com>
+# Local build: export PUBLIC_EXTERNAL_API_HOST (or rely on default), then: makepkg -si
 pkgname=nhf-addon-manager
-pkgver=0.5.8
+pkgver=0.5.7
 pkgrel=1
-pkgdesc="NHF Addon Manager"
+pkgdesc="NHF WeakAuras / addon manager (Tauri), built against host webkit"
 arch=('x86_64')
 url="https://github.com/sragia/nhf-wa-client"
 license=('MIT')
 depends=('webkit2gtk-4.1' 'libayatana-appindicator' 'gtk3' 'hicolor-icon-theme')
 makedepends=('rust' 'cargo' 'npm' 'nodejs' 'binutils')
 options=('!strip' '!lto')
-source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
 
 build() {
-  cd "$pkgname-$pkgver"
+  cd "$startdir"
 
   export PUBLIC_EXTERNAL_API_HOST="${PUBLIC_EXTERNAL_API_HOST:-https://nhfguild.com}"
 
@@ -25,7 +23,7 @@ build() {
 }
 
 package() {
-  cd "$pkgname-$pkgver"
+  cd "$startdir"
 
   install -Dm755 "src-tauri/target/release/nhf-aura-manager" \
     "$pkgdir/usr/bin/$pkgname"

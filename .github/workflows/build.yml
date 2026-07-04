@@ -6,7 +6,26 @@ on:
       - "*"
 
 jobs:
+  create-release:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Release ${{ github.ref_name }} already exists"
+          else
+            gh release create "${{ github.ref_name }}" \
+              --draft \
+              --title "NHF Addon Manager ${{ github.ref_name }}" \
+              --notes "See the assets to download this version and install."
+          fi
+
   build:
+    needs: create-release
     permissions: write-all
     strategy:
       fail-fast: false
@@ -93,7 +112,7 @@ jobs:
           echo "Re-uploaded $(basename "$appimage") (GPU-lib-free) with regenerated signature"
 
   build-arch:
-    needs: build
+    needs: create-release
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -104,8 +123,8 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm \
-            rust webkit2gtk-4.1 gtk3 \
-            libayatana-appindicator librsvg \
+            rust cargo binutils webkit2gtk-4.1 gtk3 \
+            libayatana-appindicator \
             nodejs npm git github-cli
 
       - name: Checkout repository
