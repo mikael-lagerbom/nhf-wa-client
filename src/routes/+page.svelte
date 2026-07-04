@@ -1273,7 +1273,7 @@
     }
 
     try {
-      const backupPath = `${wowFolder}\\NHF-Backup`;
+      const backupPath = `${wowFolder}/NHF-Backup`;
       await openShell(backupPath);
     } catch (error: any) {
       showNotification(`Failed to open backup folder: ${error}`, "error");
