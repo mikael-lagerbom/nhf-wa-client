@@ -1460,14 +1460,18 @@
                 id="wow_folder"
                 bind:value={wowFolder}
                 autocomplete="off"
-                onclick={openFolder}
+                spellcheck="false"
+                placeholder="/path/to/World of Warcraft/_retail_"
                 onblur={onWowFolderBlur}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
               />
               <button
                 type="button"
                 class="browse-folder-btn"
                 onclick={openFolder}
-                title="Open File Explorer to select WoW folder"
+                title="Browse for WoW folder"
                 aria-label="Browse for WoW folder"
               >
                 <svg
@@ -1530,7 +1534,7 @@
                 bind:checked={startOnStartup}
                 onchange={updateStartOnStartupSetting}
               />
-              <label for="start_on_startup">Start when Windows starts</label>
+              <label for="start_on_startup">Start at login</label>
             </div>
           </div>
         </section>
@@ -2796,6 +2800,7 @@
   .folder-picker-row input {
     flex: 1;
     min-width: 0;
+    cursor: text;
   }
 
   .browse-folder-btn {

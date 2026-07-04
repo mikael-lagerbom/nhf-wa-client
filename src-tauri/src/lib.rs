@@ -23,12 +23,69 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// WoW uses `Interface/AddOns`, but paths are case-insensitive on Windows.
+/// On Linux, accept common variants and create the standard folder when missing.
+fn resolve_addons_dir(wow_folder: &str) -> Result<PathBuf, String> {
+    let wow_path = Path::new(wow_folder.trim());
+    if !wow_path.is_dir() {
+        return Err(format!("WoW folder does not exist: {}", wow_folder));
+    }
+
+    let interface_path = wow_path.join("Interface");
+    if !interface_path.is_dir() {
+        return Err(format!(
+            "Interface folder not found in WoW directory (expected {})",
+            interface_path.display()
+        ));
+    }
+
+    for name in ["AddOns", "Addons", "addons"] {
+        let candidate = interface_path.join(name);
+        if candidate.is_dir() {
+            return Ok(candidate);
+        }
+    }
+
+    let default = interface_path.join("AddOns");
+    fs::create_dir_all(&default).map_err(|e| {
+        format!(
+            "Failed to create addon directory {}: {}",
+            default.display(),
+            e
+        )
+    })?;
+    Ok(default)
+}
+
+#[tauri::command]
+fn resolve_addons_dir_cmd(wow_folder: String) -> Result<String, String> {
+    resolve_addons_dir(&wow_folder).map(|path| path.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn extract_zip(file_path: String, destination: String) -> Result<(), String> {
-    let destination_path = Path::new(&destination);
+    let destination_path = if Path::new(&destination).is_dir() {
+        PathBuf::from(&destination)
+    } else if let Some(wow_folder) = destination.strip_suffix("/Interface/AddOns").or_else(
+        || destination.strip_suffix("/Interface/Addons"),
+    ) {
+        resolve_addons_dir(wow_folder)?
+    } else if Path::new(&destination).parent().is_some_and(|p| p.ends_with("Interface")) {
+        // Parent is Interface/ but the addons folder name did not match exactly.
+        let wow_folder = Path::new(&destination)
+            .parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| format!("Addon folder does not exist: {}", destination))?;
+        resolve_addons_dir(wow_folder.to_string_lossy().as_ref())?
+    } else {
+        PathBuf::from(&destination)
+    };
 
-    if !destination_path.exists() {
-        return Err("Addon Folder does not exist".to_string());
+    if !destination_path.is_dir() {
+        return Err(format!(
+            "Addon folder does not exist: {}",
+            destination_path.display()
+        ));
     }
 
     // Check if the file exists and is readable
@@ -608,73 +665,187 @@ async fn show_window(window: tauri::Window) -> Result<(), String> {
 }
 
 // Startup management functions
-#[tauri::command]
-async fn set_start_on_startup(_app_handle: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let run_key = hkcu.open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_WRITE)
-            .map_err(|e| format!("Failed to open registry key: {}", e))?;
-        
-        let app_name = "NHF Addon Manager";
+const AUTOSTART_APP_NAME: &str = "NHF Addon Manager";
+
+#[cfg(target_os = "linux")]
+fn linux_autostart_desktop_path() -> Result<PathBuf, String> {
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|home| PathBuf::from(home).join(".config"))
+        })
+        .ok_or_else(|| "Could not resolve XDG config directory (HOME is not set)".to_string())?;
+
+    Ok(config_home
+        .join("autostart")
+        .join("com.nhf-aura-manager.app.desktop"))
+}
+
+#[cfg(target_os = "linux")]
+fn format_desktop_exec(exe_path: &Path, args: &[&str]) -> String {
+    let exe = exe_path.to_string_lossy();
+    let quoted_exe = if exe.contains(' ') || exe.contains('\t') {
+        format!("\"{}\"", exe.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        exe.into_owned()
+    };
+
+    if args.is_empty() {
+        quoted_exe
+    } else {
+        format!("{} {}", quoted_exe, args.join(" "))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_linux_autostart(enabled: bool) -> Result<(), String> {
+    let desktop_path = linux_autostart_desktop_path()?;
+
+    if enabled {
         let exe_path = std::env::current_exe()
             .map_err(|e| format!("Failed to get app executable path: {}", e))?;
-        
-        if enabled {
-            // Add to startup with minimized argument
-            let startup_command = format!("{} --minimized", exe_path.to_string_lossy());
-            run_key.set_value(app_name, &startup_command)
-                .map_err(|e| format!("Failed to set registry value: {}", e))?;
-        } else {
-            // Remove from startup
-            match run_key.delete_value(app_name) {
-                Ok(_) => {},
-                Err(e) => {
-                    // Check if it's a file not found error (which is fine)
-                    if e.to_string().contains("file not found") || e.to_string().contains("not found") {
-                        // Key doesn't exist, which is fine
-                    } else {
-                        return Err(format!("Failed to delete registry value: {}", e));
-                    }
+
+        if let Some(parent) = desktop_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create autostart directory {}: {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+
+        let desktop_entry = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Version=1.0\n\
+             Name={name}\n\
+             Comment={name}\n\
+             Exec={exec}\n\
+             Terminal=false\n\
+             Categories=Utility;\n\
+             X-GNOME-Autostart-enabled=true\n",
+            name = AUTOSTART_APP_NAME,
+            exec = format_desktop_exec(&exe_path, &["--minimized"]),
+        );
+
+        fs::write(&desktop_path, desktop_entry).map_err(|e| {
+            format!(
+                "Failed to write autostart entry {}: {}",
+                desktop_path.display(),
+                e
+            )
+        })?;
+    } else if desktop_path.exists() {
+        fs::remove_file(&desktop_path).map_err(|e| {
+            format!(
+                "Failed to remove autostart entry {}: {}",
+                desktop_path.display(),
+                e
+            )
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn get_linux_autostart() -> Result<bool, String> {
+    Ok(linux_autostart_desktop_path()?.is_file())
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_autostart(enabled: bool) -> Result<(), String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key = hkcu
+        .open_subkey_with_flags(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            KEY_WRITE,
+        )
+        .map_err(|e| format!("Failed to open registry key: {}", e))?;
+
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Failed to get app executable path: {}", e))?;
+
+    if enabled {
+        let startup_command = format!("{} --minimized", exe_path.to_string_lossy());
+        run_key
+            .set_value(AUTOSTART_APP_NAME, &startup_command)
+            .map_err(|e| format!("Failed to set registry value: {}", e))?;
+    } else {
+        match run_key.delete_value(AUTOSTART_APP_NAME) {
+            Ok(_) => {}
+            Err(e) => {
+                let message = e.to_string();
+                if !message.contains("file not found") && !message.contains("not found") {
+                    return Err(format!("Failed to delete registry value: {}", e));
                 }
             }
         }
     }
-    
-    #[cfg(not(target_os = "windows"))]
-    {
-        return Err("Startup management is only supported on Windows".to_string());
-    }
-    
+
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_autostart() -> Result<bool, String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let run_key = hkcu
+        .open_subkey_with_flags(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+            KEY_READ,
+        )
+        .map_err(|e| format!("Failed to open registry key: {}", e))?;
+
+    match run_key.get_value::<String, _>(AUTOSTART_APP_NAME) {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            let message = e.to_string();
+            if message.contains("file not found") || message.contains("not found") {
+                Ok(false)
+            } else {
+                Err(format!("Failed to read registry value: {}", e))
+            }
+        }
+    }
+}
+
+#[tauri::command]
+async fn set_start_on_startup(_app_handle: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        return set_windows_autostart(enabled);
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return set_linux_autostart(enabled);
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        let _ = enabled;
+        Err("Startup management is not supported on this platform".to_string())
+    }
 }
 
 #[tauri::command]
 async fn get_start_on_startup() -> Result<bool, String> {
     #[cfg(target_os = "windows")]
     {
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let run_key = hkcu.open_subkey_with_flags("Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_READ)
-            .map_err(|e| format!("Failed to open registry key: {}", e))?;
-        
-        let app_name = "NHF Addon Manager";
-        match run_key.get_value::<String, _>(app_name) {
-            Ok(_) => {
-                // App is set to start on startup (regardless of minimized flag)
-                Ok(true)
-            },
-            Err(e) => {
-                // Check if it's a file not found error
-                if e.to_string().contains("file not found") || e.to_string().contains("not found") {
-                    Ok(false)
-                } else {
-                    Err(format!("Failed to read registry value: {}", e))
-                }
-            }
-        }
+        return get_windows_autostart();
     }
-    
-    #[cfg(not(target_os = "windows"))]
+
+    #[cfg(target_os = "linux")]
+    {
+        return get_linux_autostart();
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         Ok(false)
     }
@@ -775,6 +946,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             extract_zip,
+            resolve_addons_dir_cmd,
             read_file,
             write_file,
             write_binary_file,

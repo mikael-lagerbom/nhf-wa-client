@@ -2,13 +2,22 @@ import { invoke } from "@tauri-apps/api/core";
 import { load as loadStore } from '@tauri-apps/plugin-store';
 import { compareVersions, extractVersionFromToc, extractVersionFromChangelog } from './versionUtils';
 
+export async function getAddonsDir(wowFolder: string): Promise<string> {
+    return await invoke('resolve_addons_dir_cmd', { wowFolder: wowFolder.trim() }) as string;
+}
+
+async function readAddonFile(wowFolder: string, relativePath: string): Promise<string> {
+    const addonsDir = await getAddonsDir(wowFolder);
+    return await invoke('read_file', { filePath: `${addonsDir}/${relativePath}` }) as string;
+}
+
 export async function getCurrentAddonVersion(): Promise<string | false> {
     const store = await loadStore('store.json');
     try {
         if (store) {
             const storedFolder = await store.get('wow_folder');
-            if (storedFolder) {
-                const file = await invoke('read_file', { filePath: storedFolder + '/Interface/Addons/NHFAuraManager/NHFAuraManager.toc' }) as string;
+            if (typeof storedFolder === 'string' && storedFolder) {
+                const file = await readAddonFile(storedFolder, 'NHFAuraManager/NHFAuraManager.toc');
                 return extractVersionFromToc(file);
             }
         }
@@ -23,8 +32,8 @@ export async function getCurrentNSRaidToolsVersion(): Promise<string | false> {
     try {
         if (store) {
             const storedFolder = await store.get('wow_folder');
-            if (storedFolder) {
-                const file = await invoke('read_file', { filePath: storedFolder + '/Interface/AddOns/NorthernSkyRaidTools/NorthernSkyRaidTools.toc' }) as string;
+            if (typeof storedFolder === 'string' && storedFolder) {
+                const file = await readAddonFile(storedFolder, 'NorthernSkyRaidTools/NorthernSkyRaidTools.toc');
                 return extractVersionFromToc(file);
             }
         }
@@ -39,8 +48,8 @@ export async function getCurrentM33kAurasVersion(): Promise<string | false> {
     try {
         if (store) {
             const storedFolder = await store.get('wow_folder');
-            if (storedFolder) {
-                const file = await invoke('read_file', { filePath: storedFolder + '/Interface/AddOns/M33kAuras/M33kAuras.toc' }) as string;
+            if (typeof storedFolder === 'string' && storedFolder) {
+                const file = await readAddonFile(storedFolder, 'M33kAuras/M33kAuras.toc');
                 return extractVersionFromToc(file);
             }
         }
@@ -55,8 +64,8 @@ export async function getCurrentLiquidRemindersVersion(): Promise<string | false
     try {
         if (store) {
             const storedFolder = await store.get('wow_folder');
-            if (storedFolder) {
-                const file = await invoke('read_file', { filePath: storedFolder + '/Interface/AddOns/TimelineReminders/CHANGELOG.md' }) as string;
+            if (typeof storedFolder === 'string' && storedFolder) {
+                const file = await readAddonFile(storedFolder, 'TimelineReminders/CHANGELOG.md');
                 return extractVersionFromChangelog(file);
             }
         }
