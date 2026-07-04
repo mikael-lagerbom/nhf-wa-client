@@ -1,4 +1,3 @@
-import { PUBLIC_SERVER_HOST } from "$env/static/public";
 import {
   getCurrentAddonVersion,
   getCurrentNSRaidToolsVersion,
@@ -7,11 +6,10 @@ import {
   compareVersions,
 } from "./addonService";
 import { fetchJsonWithRetry } from "./networkRetry.js";
-
-/** @param {string | undefined | null} apiKey */
-const AUTH_HEADER = (apiKey) => ({
-  Authorization: apiKey ?? "",
-});
+import {
+  fetchLatestAddon,
+  fetchLatestLiquidReminders,
+} from "./releasesApi.js";
 
 /**
  * Same version rules as +page.js load(), without touching SvelteKit load / invalidate.
@@ -24,10 +22,7 @@ export async function getPendingAutoUpdateIds(apiKey) {
   const updatesNeeded = [];
 
   try {
-    const latestAddon = await fetchJsonWithRetry(
-      PUBLIC_SERVER_HOST + "/getLatestAddon",
-      { headers: AUTH_HEADER(apiKey) },
-    );
+    const latestAddon = await fetchLatestAddon(apiKey);
     const semVersion = latestAddon.semVersion;
     const currentVersion = await getCurrentAddonVersion();
     const isInstalled = !!currentVersion;
@@ -73,10 +68,7 @@ export async function getPendingAutoUpdateIds(apiKey) {
   }
 
   try {
-    const lr = await fetchJsonWithRetry(
-      PUBLIC_SERVER_HOST + "/getLatestLiquidReminders",
-      { headers: AUTH_HEADER(apiKey) },
-    );
+    const lr = await fetchLatestLiquidReminders(apiKey);
     const semVersion = lr.semVersion;
     const currentVersion = await getCurrentLiquidRemindersVersion();
     const isInstalled = !!currentVersion;

@@ -3,7 +3,6 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { load } from "@tauri-apps/plugin-store";
   import { download } from "@tauri-apps/plugin-upload";
-  import { PUBLIC_SERVER_HOST } from "$env/static/public";
   import { check as clientCheck } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
   import { getZipInfo, validateAndExtractZip } from "./addonService";
@@ -13,6 +12,10 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { fetchJsonWithRetry } from "./networkRetry.js";
   import { getPendingAutoUpdateIds } from "./addonUpdateCheck.js";
+  import {
+    fetchLatestAddon,
+    fetchLatestLiquidReminders,
+  } from "./releasesApi.js";
   import {
     fetchAndWriteCompanionAddon,
     fetchCompanionSeasons,
@@ -72,7 +75,6 @@
 
   type ActiveView = "manager" | "companion";
   let activeView = $state<ActiveView>("manager");
-  let externalApiKey = $state("");
   let companionSeasonId = $state("");
   let companionSeasons = $state<CompanionSeason[]>([]);
   let companionCurrentSeasonId = $state("");
@@ -305,7 +307,7 @@
     store = await load("store.json");
     if (store) {
       const storedFolder = await store.get("wow_folder");
-      const storedApiKey = await store.get("api_key");
+      const storedApiKey = await store.get("external_api_key");
       const storedBackupEnabled = await store.get("backup_enabled");
       const storedBackupOnStartup = await store.get("backup_on_startup");
       const storedBackupAllData = await store.get("backup_all_data");
@@ -323,7 +325,7 @@
           await store.set("wow_folder", "");
         }
       }
-      if (storedApiKey) {
+      if (storedApiKey && typeof storedApiKey === "string") {
         apiKey = storedApiKey;
       }
       if (storedBackupEnabled !== undefined) {
@@ -363,16 +365,12 @@
         }
       }
 
-      const storedExternalApiKey = await store.get("external_api_key");
       const storedCompanionLastFetch = await store.get("companion_last_fetch");
       const storedCompanionSeasonId = await store.get("companion_season_id");
       const storedCompanionFetchOnStartup = await store.get(
         "companion_fetch_on_startup",
       );
 
-      if (storedExternalApiKey && typeof storedExternalApiKey === "string") {
-        externalApiKey = storedExternalApiKey;
-      }
       if (
         storedCompanionLastFetch &&
         typeof storedCompanionLastFetch === "string"
@@ -440,7 +438,7 @@
   const runStartupCompanionFetch = async () => {
     if (!companionFetchOnStartup) return;
     if (!wowFolder || !isRetailWowPath(wowFolder)) return;
-    if (!externalApiKey.trim()) return;
+    if (!apiKey.trim()) return;
     if (isCompanionFetching) return;
 
     await loadCompanionSeasons();
@@ -576,8 +574,12 @@
     try {
       isInstalling = true;
       openInstallDock("NHF Addon");
+      const latest = await fetchLatestAddon(apiKey);
+      if (!latest.downloadUrl) {
+        throw new Error("No addon download URL in release metadata");
+      }
       await downloadWithRetry(
-        PUBLIC_SERVER_HOST + "/assets/addon.zip",
+        latest.downloadUrl,
         "./addon.zip",
         (progress) => {
           installDockFromProgress(progress as Record<string, unknown>);
@@ -588,7 +590,7 @@
             progress,
           );
         },
-        new Map([["Authorization", apiKey]]),
+        undefined,
       );
       installDockExtracting();
       await extractAddonZip();
@@ -749,8 +751,13 @@
       isLRInstalling = true;
       openInstallDock("Liquid Reminders");
 
+      const latest = await fetchLatestLiquidReminders(apiKey);
+      if (!latest.downloadUrl) {
+        throw new Error("No Liquid Reminders download URL in release metadata");
+      }
+
       await downloadWithRetry(
-        PUBLIC_SERVER_HOST + "/assets/liquidReminders.zip",
+        latest.downloadUrl,
         "./liquidReminders.zip",
         (progress) => {
           installDockFromProgress(progress as Record<string, unknown>);
@@ -761,7 +768,7 @@
             progress,
           );
         },
-        new Map([["Authorization", apiKey]]),
+        undefined,
       );
 
       console.log("Liquid Reminders download complete, starting extraction...");
@@ -789,13 +796,8 @@
 
   const updateKey = async () => {
     if (!store) return;
-    await store.set("api_key", apiKey);
+    await store.set("external_api_key", apiKey);
     await refreshPageData();
-  };
-
-  const updateExternalApiKey = async () => {
-    if (!store) return;
-    await store.set("external_api_key", externalApiKey);
     await loadCompanionSeasons();
   };
 
@@ -810,7 +812,7 @@
   };
 
   async function loadCompanionSeasons() {
-    const trimmedKey = externalApiKey.trim();
+    const trimmedKey = apiKey.trim();
     if (!trimmedKey) {
       companionSeasons = [];
       companionCurrentSeasonId = "";
@@ -850,7 +852,7 @@
   const canFetchCompanion = $derived(
     !!wowFolder &&
       isRetailWowPath(wowFolder) &&
-      !!externalApiKey.trim() &&
+      !!apiKey.trim() &&
       !isCompanionFetching,
   );
 
@@ -872,7 +874,7 @@
     try {
       const result = await fetchAndWriteCompanionAddon(
         wowFolder,
-        externalApiKey,
+        apiKey,
         companionSeasonId || undefined,
       );
 
@@ -896,16 +898,11 @@
   }
 
   const updateClient = async () => {
-    if (!apiKey) {
-      showNotification("Set your API key before updating the client.", "error");
-      return;
-    }
     const timeoutMs = 120_000;
     const maxAttempts = 4;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const update = await clientCheck({
-          headers: { Authorization: apiKey },
           timeout: timeoutMs,
         });
         if (update) {
@@ -990,14 +987,18 @@
       openInstallDock("NHF Addon (auto-update)");
 
       console.log("Starting download of NHF Addon...");
+      const latest = await fetchLatestAddon(apiKey);
+      if (!latest.downloadUrl) {
+        throw new Error("No addon download URL in release metadata");
+      }
       await downloadWithRetry(
-        PUBLIC_SERVER_HOST + "/assets/addon.zip",
+        latest.downloadUrl,
         "./addon.zip",
         (progress) => {
           installDockFromProgress(progress as Record<string, unknown>);
           console.log("NHF Addon download progress:", progress);
         },
-        new Map([["Authorization", apiKey]]),
+        undefined,
       );
       console.log("NHF Addon download complete, starting extraction...");
       installDockExtracting();
@@ -1126,14 +1127,18 @@
       openInstallDock("Liquid Reminders (auto-update)");
 
       console.log("Starting download of Liquid Reminders...");
+      const latest = await fetchLatestLiquidReminders(apiKey);
+      if (!latest.downloadUrl) {
+        throw new Error("No Liquid Reminders download URL in release metadata");
+      }
       await downloadWithRetry(
-        PUBLIC_SERVER_HOST + "/assets/liquidReminders.zip",
+        latest.downloadUrl,
         "./liquidReminders.zip",
         (progress) => {
           installDockFromProgress(progress as Record<string, unknown>);
           console.log("Liquid Reminders download progress:", progress);
         },
-        new Map([["Authorization", apiKey]]),
+        undefined,
       );
       console.log("Liquid Reminders download complete, starting extraction...");
       installDockExtracting();
@@ -1493,12 +1498,15 @@
             </div>
           </div>
           <div class="input">
-            <label for="api_key">API key (from Discord)</label>
+            <label for="api_key">API key (Profile → Companion API Keys)</label>
             <input
+              type="password"
               name="api_key"
               id="api_key"
               bind:value={apiKey}
               onchange={updateKey}
+              placeholder="nhf_..."
+              autocomplete="off"
             />
           </div>
         </section>
@@ -1842,9 +1850,8 @@
         <h2 class="panel-section-title">Companion</h2>
         <p class="companion-help">
           Fetch raid roster, assignment notes and raid plans into the
-          <code>NHFCompanion</code> addon. Generate an API key in the web app
-          under
-          <strong>Your Profile</strong>.
+          <code>NHFCompanion</code> addon. Set your API key in Setup on the
+          Addon Manager tab.
         </p>
         <p class="companion-disclaimer">
           After fetching, run <code>/reload</code> in WoW for the addon to load updated
@@ -1858,18 +1865,11 @@
           </p>
         {/if}
 
-        <div class="input">
-          <label for="external_api_key">External API key</label>
-          <input
-            type="password"
-            name="external_api_key"
-            id="external_api_key"
-            bind:value={externalApiKey}
-            onchange={updateExternalApiKey}
-            placeholder="nhf_..."
-            autocomplete="off"
-          />
-        </div>
+        {#if !apiKey.trim()}
+          <p class="companion-warning">
+            Set your API key in Setup on the Addon Manager tab first.
+          </p>
+        {/if}
 
         <div class="input">
           <label for="companion_season_id">Season</label>
@@ -1879,7 +1879,7 @@
             bind:value={companionSeasonId}
             onchange={updateCompanionSeasonId}
             disabled={isSeasonsLoading ||
-              !externalApiKey.trim() ||
+              !apiKey.trim() ||
               companionSeasons.length === 0}
           >
             {#if isSeasonsLoading}

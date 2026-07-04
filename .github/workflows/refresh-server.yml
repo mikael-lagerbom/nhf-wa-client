@@ -11,4 +11,4 @@ jobs:
 
     steps:
       - name: Refresh Server
-        run: curl https://nhfmanager.sragia.com/refresh
+        run: curl https://nhfguild.com/api/releases/hook/refresh

@@ -159,7 +159,7 @@ async function fetchExternalJson<T>(url: string, apiKey: string): Promise<T> {
     });
 
     if (response.status === 401) {
-        throw new Error('Invalid or revoked API key. Generate a new key in Settings → External API.');
+        throw new Error('Invalid or revoked API key. Generate a new key in Profile → Companion API Keys.');
     }
 
     if (!response.ok) {
@@ -617,7 +617,7 @@ export async function fetchCompanionSeasons(
 ): Promise<SeasonsResponse> {
     const trimmedKey = externalApiKey.trim();
     if (!trimmedKey) {
-        throw new Error('External API key is required.');
+        throw new Error('Companion API key is required.');
     }
 
     return fetchExternalJson<SeasonsResponse>(
@@ -633,7 +633,7 @@ export async function fetchAndWriteCompanionAddon(
 ): Promise<CompanionFetchResult> {
     const trimmedKey = externalApiKey.trim();
     if (!trimmedKey) {
-        throw new Error('External API key is required.');
+        throw new Error('Companion API key is required.');
     }
 
     if (!wowFolder?.trim()) {

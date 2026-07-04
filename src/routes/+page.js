@@ -1,39 +1,24 @@
-import { PUBLIC_SERVER_HOST } from "$env/static/public";
 import { getVersion } from '@tauri-apps/api/app';
 import { load as loadStore } from '@tauri-apps/plugin-store';
 import { getCurrentAddonVersion, getCurrentNSRaidToolsVersion, getCurrentM33kAurasVersion, getCurrentLiquidRemindersVersion, compareVersions } from './addonService';
-import { fetchJsonWithRetry, fetchWithRetry } from './networkRetry.js';
-
-/** @param {string | undefined | null} apiKey */
-const AUTH_HEADER = (apiKey) => ({
-    "Authorization": apiKey ?? "",
-});
+import { fetchJsonWithRetry } from './networkRetry.js';
+import {
+    checkApiReachable,
+    fetchLatestAddon,
+    fetchLatestClient,
+    fetchLatestLiquidReminders,
+} from './releasesApi.js';
 
 export const load = async () => {
     const store = await loadStore('store.json');
-    const apiKey = await store?.get('api_key');
+    const apiKey = await store?.get('external_api_key');
 
-    const latestClient = fetchJsonWithRetry(
-        PUBLIC_SERVER_HOST + "/getLatestClient",
-        { headers: AUTH_HEADER(apiKey) },
-    );
-    const latestAddon = fetchJsonWithRetry(
-        PUBLIC_SERVER_HOST + "/getLatestAddon",
-        { headers: AUTH_HEADER(apiKey) },
-    );
-    const latestLiquidReminders = fetchJsonWithRetry(
-        PUBLIC_SERVER_HOST + "/getLatestLiquidReminders",
-        { headers: AUTH_HEADER(apiKey) },
-    );
+    const latestClient = fetchLatestClient(apiKey);
+    const latestAddon = fetchLatestAddon(apiKey);
+    const latestLiquidReminders = fetchLatestLiquidReminders(apiKey);
 
     return {
-        isServerUp: new Promise((resolve) => {
-            fetchWithRetry(PUBLIC_SERVER_HOST + "/ping", {
-                headers: AUTH_HEADER(apiKey),
-            })
-                .then(() => resolve(true))
-                .catch(() => resolve(false));
-        }),
+        isServerUp: checkApiReachable(apiKey),
         client: new Promise((resolve) => {
             latestClient.then((data) => {
                 data.semVersion = data.semVersion.replace("v", "");

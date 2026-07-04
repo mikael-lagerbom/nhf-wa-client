@@ -1,54 +1,54 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NHF Addon Manager",
-  "version": "0.5.5",
-  "identifier": "com.nhf-aura-manager.app",
-  "build": {
-    "beforeDevCommand": "deno task dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../build"
-  },
   "app": {
     "macOSPrivateApi": true,
-    "windows": [
-      {
-        "title": "NHF Addon Manager",
-        "width": 800,
-        "height": 700,
-        "backgroundColor": "#00000000",
-        "decorations": false,
-        "shadow": false,
-        "transparent": true,
-        "theme": "Dark",
-        "resizable": false,
-        "scrollBarStyle": "fluentOverlay"
-      }
-    ],
     "security": {
       "csp": null
-    }
+    },
+    "windows": [
+      {
+        "backgroundColor": "#00000000",
+        "decorations": false,
+        "height": 700,
+        "resizable": false,
+        "scrollBarStyle": "fluentOverlay",
+        "shadow": false,
+        "theme": "Dark",
+        "title": "NHF Addon Manager",
+        "transparent": true,
+        "width": 800
+      }
+    ]
+  },
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "deno task dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../build"
   },
   "bundle": {
     "active": true,
-    "targets": "all",
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "targets": "all"
   },
+  "identifier": "com.nhf-aura-manager.app",
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI2MTI1MjkzNTdGRjYxNQpSV1FWOW44MUtTVmhBdm1ROWx5eGc2aFd4OVpBTUFsNkxRajJtYTZKMWlOVnQ5N0VNbXplY2ZpLwo=",
       "endpoints": [
-        "https://nhfmanager.sragia.com/clientupdate/{{current_version}}"
+        "https://nhfguild.com/api/external/v1/releases/client/update/{{current_version}}"
       ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI2MTI1MjkzNTdGRjYxNQpSV1FWOW44MUtTVmhBdm1ROWx5eGc2aFd4OVpBTUFsNkxRajJtYTZKMWlOVnQ5N0VNbXplY2ZpLwo=",
       "windows": {
         "installMode": "passive"
       }
     }
-  }
+  },
+  "productName": "NHF Addon Manager",
+  "version": "0.5.5"
 }
