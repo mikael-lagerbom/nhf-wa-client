@@ -1,0 +1,35 @@
+# Maintainer: NHF Guild <https://nhfguild.com>
+pkgname=nhf-addon-manager
+pkgver=0.5.7
+pkgrel=1
+pkgdesc="NHF Addon Manager"
+arch=('x86_64')
+url="https://github.com/sragia/nhf-wa-client"
+license=('MIT')
+depends=('webkit2gtk-4.1' 'gtk3' 'libayatana-appindicator' 'librsvg' 'hicolor-icon-theme')
+makedepends=('rust' 'nodejs' 'npm')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  export PUBLIC_EXTERNAL_API_HOST="${PUBLIC_EXTERNAL_API_HOST:-https://nhfguild.com}"
+  npm ci
+  npm run build
+  cd src-tauri
+  cargo build --release
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+
+  install -Dm755 "src-tauri/target/release/nhf-aura-manager" "$pkgdir/usr/bin/nhf-aura-manager"
+  install -Dm644 "pkg/arch/nhf-addon-manager.desktop" \
+    "$pkgdir/usr/share/applications/com.nhf-aura-manager.app.desktop"
+  install -Dm644 "src-tauri/icons/32x32.png" \
+    "$pkgdir/usr/share/icons/hicolor/32x32/apps/com.nhf-aura-manager.app.png"
+  install -Dm644 "src-tauri/icons/128x128.png" \
+    "$pkgdir/usr/share/icons/hicolor/128x128/apps/com.nhf-aura-manager.app.png"
+  install -Dm644 "src-tauri/icons/icon.png" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/com.nhf-aura-manager.app.png"
+}
