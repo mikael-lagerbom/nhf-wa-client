@@ -1,6 +1,6 @@
 import { PUBLIC_EXTERNAL_API_HOST } from '$env/static/public';
 import { fetch } from '@tauri-apps/plugin-http';
-import { clearDirectory, fileExists, readTextFile, writeBinaryFile, writeTextFile } from './addonService';
+import { clearDirectory, fileExists, getAddonsDir, readTextFile, writeBinaryFile, writeTextFile } from './addonService';
 import { buildNHFDataLua } from './jsonToLua';
 import { NHF_COMPANION_ADDON_NAME, NHF_COMPANION_TOC } from './companionToc';
 import { getImageSize, type ImageSize } from './imageSize';
@@ -178,8 +178,9 @@ async function fetchExternalJson<T>(url: string, apiKey: string): Promise<T> {
     return response.json() as Promise<T>;
 }
 
-function getCompanionAddonDir(wowFolder: string): string {
-    return `${wowFolder}/Interface/AddOns/${NHF_COMPANION_ADDON_NAME}`;
+async function getCompanionAddonDir(wowFolder: string): Promise<string> {
+    const addonsDir = await getAddonsDir(wowFolder.trim());
+    return `${addonsDir}/${NHF_COMPANION_ADDON_NAME}`;
 }
 
 function sanitizePathSegment(value: string): string {
@@ -662,7 +663,7 @@ export async function fetchAndWriteCompanionAddon(
         }),
     ]);
 
-    const addonDir = getCompanionAddonDir(wowFolder.trim());
+    const addonDir = await getCompanionAddonDir(wowFolder.trim());
     const imageInfoByBossId = await downloadBossImages(addonDir, season.bosses ?? []);
     const bossCatalog = buildBossCatalog(season.bosses ?? [], imageInfoByBossId);
     const catalogById = new Map(bossCatalog.map((boss) => [boss.bossId, boss]));
